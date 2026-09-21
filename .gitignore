@@ -6,3 +6,5 @@ nightly_run.log
 .env
 *.zip
 *.txt.bak
+run_nightly.bat
+nightly_task_scheduler.log

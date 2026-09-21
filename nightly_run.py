@@ -1,34 +1,33 @@
 """
 nightly_run.py
 ---------------
-This is the script that will eventually run automatically every night,
-with nobody watching it. It's built now so the scheduling and pipeline
-plumbing is ready - the one piece still missing is fetch_todays_files(),
-which needs a real URL/login before it can be written for real.
+The script that runs automatically every night (via Windows Task
+Scheduler - see README.md's "Automating the nightly run" section).
 
-WHAT THIS DOES RIGHT NOW:
-  1. Calls fetch_todays_files() - currently a placeholder that raises
-     NotImplementedError with a clear message, since we don't yet know
-     where IN/AS/BQ actually come from.
-  2. Once that's filled in, it will run import_in.py, import_as.py,
-     and import_bq.py automatically, in the correct order, against
-     whatever files were just fetched.
-  3. Everything is logged to nightly_run.log (with a timestamp) instead
-     of just printing to a terminal nobody is watching overnight - so
-     if something breaks at 2 AM, there's a record to check in the
-     morning instead of just silence.
-
-HOW TO FILL IN fetch_todays_files() ONCE WE KNOW THE SOURCE:
-  - If it's a plain public URL: use `requests` (or Playwright if the
-    site needs a real browser, same as our DIBBS RFQ scraper) to
-    download the file, save it with today's date in the filename,
-    return the three file paths.
-  - If it needs a DIBBS vendor login: read the username/password from
-    environment variables (same pattern as NOVIQ_DB_PASSWORD - never
-    hardcoded), use Playwright to log in, navigate, and download.
+WHAT THIS DOES:
+  1. Fetches yesterday's IN/AS/BQ files from DIBBS.
+  2. If the IN file isn't there yet (DIBBS is sometimes late or briefly
+     down), it does NOT give up for the night. Instead it falls back to
+     scraping DIBBS's own live "Recent RFQs" listing for that same
+     date and saves whatever solicitations are already visible there -
+     through the exact same save-functions import_in.py itself uses,
+     so nothing is ever duplicated once the real file shows up later
+     (see rfq_live_fallback.py for exactly how that's guaranteed).
+  3. Imports AS and BQ normally if they came through; if they didn't,
+     that's fine too - they'll simply fill in the extra details
+     (quantity, price, approved sources) next time they succeed,
+     matching onto the solicitations/lines already saved in step 1/2.
+  4. Everything - successes, failures, AND every time the fallback gets
+     used - is written to nightly_run.log with a plain-English line, so
+     you can open that one file any morning and immediately see what
+     happened, instead of guessing.
 
 HOW TO SCHEDULE THIS TO RUN EVERY NIGHT (Windows Task Scheduler):
   See the "Automating the nightly run" section in README.md.
+
+This file also exposes run_for_date(target_date), used by both the
+nightly run above (for yesterday) and the website's Admin page (for
+whatever specific date you type in there) - same logic either way.
 """
 
 import sys
@@ -36,10 +35,12 @@ import logging
 from datetime import date, timedelta
 from pathlib import Path
 
+import db
 import import_in
 import import_as
 import import_bq
 import fetch_daily_files
+import rfq_live_fallback
 
 LOG_PATH = Path(__file__).parent / "nightly_run.log"
 
@@ -54,65 +55,99 @@ logging.basicConfig(
 log = logging.getLogger("nightly_run")
 
 
-def fetch_todays_files():
+def run_for_date(target_date: date):
     """
-    Fetches YESTERDAY's IN and BQ (which bundles AS inside it) - not
-    today's. CONFIRMED from two real runs: DIBBS never has the current
-    calendar day's file available (it 404s every time we've tried),
-    while the previous day's file has worked every single time. This
-    matches the standard "nightly batch job processes yesterday's
-    completed data" pattern anyway - a job running at 2 AM shouldn't
-    expect today's file to exist when today has barely started.
+    Runs the full pipeline for ONE specific date: fetch IN/AS/BQ for
+    that date, falling back to the live RFQ listing scrape if IN isn't
+    available yet, then import whatever came through. Returns a dict
+    describing exactly what happened - used both for the nightly log
+    and for the website's Admin page to show a result.
+    """
+    log.info(f"--- Running pipeline for {target_date} ---")
+    outcome = {
+        "date": str(target_date),
+        "in_source": None,   # "real_file" / "live_fallback" / "unavailable"
+        "as_imported": False,
+        "bq_imported": False,
+        "fallback_counts": None,
+        "errors": [],
+    }
 
-    Raises if any of the three expected files didn't come through, so
-    a broken night fails loudly in the log rather than silently
-    importing nothing or partial data.
-    """
-    target_date = date.today() - timedelta(days=1)
     results = fetch_daily_files.fetch_all(target_date, include_ca=False)
 
-    missing = [k for k in ("in", "as", "bq") if not results.get(k)]
-    if missing:
-        raise RuntimeError(f"Failed to fetch: {', '.join(missing)} for {target_date}")
+    # --- IN (creates the solicitations/lines) ---
+    if results.get("in"):
+        try:
+            log.info(f"Importing real IN file: {results['in']}")
+            import_in.run(str(results["in"]))
+            outcome["in_source"] = "real_file"
+        except Exception as e:
+            log.error(f"IN import failed even though the file was downloaded: {e}")
+            outcome["errors"].append(f"IN import failed: {e}")
+    else:
+        log.warning(
+            f"IN file for {target_date} wasn't available from DIBBS's archive yet. "
+            f"Falling back to DIBBS's live 'Recent RFQs' listing for this date..."
+        )
+        conn = db.get_connection()
+        try:
+            counts = rfq_live_fallback.run_fallback(conn, target_date)
+        finally:
+            conn.close()
+        outcome["fallback_counts"] = counts
+        if counts["rows_found"] > 0:
+            outcome["in_source"] = "live_fallback"
+            log.info(
+                f"Live fallback used for {target_date}: found {counts['rows_found']} row(s) - "
+                f"{counts['solicitations_new']} new solicitation(s), "
+                f"{counts['solicitations_seen']} already known, "
+                f"{counts['lines_new']} new line(s), {counts['errors']} error(s). "
+                f"These will be filled in/confirmed automatically once the real IN file arrives."
+            )
+        else:
+            outcome["in_source"] = "unavailable"
+            log.warning(
+                f"Live fallback found NOTHING for {target_date} either - DIBBS itself may be "
+                f"down or that date genuinely has no solicitations. Nothing was saved for IN today."
+            )
 
-    return results["in"], results["as"], results["bq"]
+    # --- AS (approved sources - bundled inside BQ's zip) ---
+    if results.get("as"):
+        try:
+            log.info(f"Importing AS file: {results['as']}")
+            import_as.run(str(results["as"]))
+            outcome["as_imported"] = True
+        except Exception as e:
+            log.error(f"AS import failed: {e}")
+            outcome["errors"].append(f"AS import failed: {e}")
+    else:
+        log.warning(f"AS file for {target_date} wasn't available - will fill in automatically once it is.")
+
+    # --- BQ (quantity/price/etc, joined onto lines already saved above) ---
+    if results.get("bq"):
+        try:
+            log.info(f"Importing BQ file: {results['bq']}")
+            import_bq.run(str(results["bq"]))
+            outcome["bq_imported"] = True
+        except Exception as e:
+            log.error(f"BQ import failed: {e}")
+            outcome["errors"].append(f"BQ import failed: {e}")
+    else:
+        log.warning(f"BQ file for {target_date} wasn't available - will fill in automatically once it is.")
+
+    ok = outcome["in_source"] in ("real_file", "live_fallback") and not outcome["errors"]
+    log.info(f"--- Pipeline for {target_date} finished ({'OK' if ok else 'completed with issues'}) ---")
+    outcome["ok"] = ok
+    return outcome
 
 
 def run_nightly():
-    log.info(f"=== Nightly run starting (run date: {date.today()}) ===")
-
-    try:
-        in_path, as_path, bq_path = fetch_todays_files()
-    except Exception as e:
-        log.error(f"Fetching yesterday's files failed: {e}")
-        log.info("=== Nightly run FAILED (fetch step) ===")
-        return False
-
-    success = True
-
-    try:
-        log.info(f"Importing IN file: {in_path}")
-        import_in.run(str(in_path))
-    except Exception as e:
-        log.error(f"IN import failed: {e}")
-        success = False
-
-    try:
-        log.info(f"Importing AS file: {as_path}")
-        import_as.run(str(as_path))
-    except Exception as e:
-        log.error(f"AS import failed: {e}")
-        success = False
-
-    try:
-        log.info(f"Importing BQ file: {bq_path}")
-        import_bq.run(str(bq_path))
-    except Exception as e:
-        log.error(f"BQ import failed: {e}")
-        success = False
-
-    log.info(f"=== Nightly run {'completed successfully' if success else 'completed WITH ERRORS'} ===")
-    return success
+    """The nightly entry point: always runs for YESTERDAY's date."""
+    target_date = date.today() - timedelta(days=1)
+    log.info(f"=== Nightly run starting (run date: {date.today()}, target: {target_date}) ===")
+    outcome = run_for_date(target_date)
+    log.info(f"=== Nightly run {'completed successfully' if outcome['ok'] else 'completed WITH ISSUES'} ===")
+    return outcome["ok"]
 
 
 if __name__ == "__main__":

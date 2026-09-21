@@ -187,3 +187,54 @@ python nightly_run.py
   management price populated first
 - **Date-status tabs + Flask/UI wiring** — connecting this database to
   the dashboard we built earlier
+
+## Running automatically every night (Windows Task Scheduler)
+
+1. Open **Task Scheduler** (search for it in the Start menu).
+2. Click **Create Basic Task...** on the right.
+3. Name it something like "Noviq DLA Brain - Nightly Pipeline", click Next.
+4. Trigger: choose **Daily**, pick a time when your PC is normally on and
+   idle (e.g. 3:00 AM), click Next.
+5. Action: choose **Start a program**, click Next.
+6. Program/script: click **Browse...** and select `run_nightly.bat` in this
+   project folder. Leave "Add arguments" and "Start in" blank (the .bat
+   file sets its own folder). Click Next, then **Finish**.
+7. That's it - every night at the time you picked, `run_nightly.bat` will
+   run the pipeline (fetch yesterday's files, fall back to the live RFQ
+   listing if the real file isn't there yet, then import everything) with
+   nobody needing to be at the computer.
+
+To check it's working: after it's run at least once, open
+`nightly_task_scheduler.log` (a plain text file in this same folder) or
+`nightly_run.log` for the detailed, line-by-line version - or use the
+Admin page described below, which shows the same log in your browser.
+
+**Testing it right now, without waiting for 3 AM:** double-click
+`run_nightly.bat` yourself, or right-click the task in Task Scheduler and
+choose "Run".
+
+## The Admin page (run it / see logs from the website itself)
+
+This only works when you run the website on your own PC (it needs
+Playwright and a route to DIBBS, neither of which the public Render copy
+has) - it's automatically OFF there, nothing to configure.
+
+To use it locally:
+1. In PowerShell, in this project folder, set one more environment
+   variable before starting the site:
+   ```
+   $env:NOVIQ_ENABLE_ADMIN = "true"
+   ```
+   (along with the NOVIQ_DB_* variables you already set for the database.)
+2. Run `python app.py` like normal.
+3. Open `http://localhost:5000/admin` in your browser.
+
+From there you can:
+- Click **"Run tonight's pipeline"** to run it right now instead of
+  waiting for Task Scheduler.
+- Pick any date and click **"Run for this date"** to backfill it - if
+  DIBBS's file for that date is missing, it automatically falls back to
+  the live RFQ listing scrape, safely (no duplicates once the real file
+  arrives later).
+- Watch the same plain-English log the automatic nightly run writes to,
+  right there in the page, refreshing itself while a run is in progress.

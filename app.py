@@ -1,9 +1,32 @@
 import os
+import threading
+from datetime import date, datetime
+
 from flask import Flask, jsonify, request, send_from_directory
 
 import database
 
 app = Flask(__name__, static_folder="static", static_url_path="")
+
+# ---------------------------------------------------------------------------
+# Admin panel (run the pipeline / see logs from the website itself)
+# ---------------------------------------------------------------------------
+# This ONLY works on a machine that has Playwright installed and can reach
+# DIBBS - i.e. your own PC, not the public Render-hosted copy (Render's
+# requirements-deploy.txt deliberately leaves Playwright out, and Render's
+# servers can't reach DIBBS anyway). So this whole panel is OFF by default,
+# and only turns on when NOVIQ_ENABLE_ADMIN=true is set in your own
+# PowerShell session before running app.py locally - it stays off on Render
+# automatically, with nothing extra to configure there.
+ADMIN_ENABLED = os.environ.get("NOVIQ_ENABLE_ADMIN", "false").strip().lower() == "true"
+
+_admin_lock = threading.Lock()   # only one pipeline run at a time
+_admin_running = {"active": False, "started_at": None}
+
+if ADMIN_ENABLED:
+    import db as legacy_db
+    import nightly_run
+    LOG_PATH = os.path.join(os.path.dirname(__file__), "nightly_run.log")
 
 
 @app.route("/")
@@ -189,10 +212,103 @@ def api_scrape():
         "error": (
             "Live scraping has been retired. Data now comes from the "
             "noviq-dla-brain import pipeline (IN/AS/BQ files), which runs "
-            "nightly. Run nightly_run.py in the noviq-dla-brain project, "
-            "or wait for the scheduled task, then refresh this page."
+            "nightly. Open the Admin page (only available when you run "
+            "this website on your own PC) to trigger it, or wait for the "
+            "scheduled task, then refresh this page."
         )
     }), 400
+
+
+# ---------------------------------------------------------------------------
+# Admin: run the pipeline / view logs from the website (local PC only)
+# ---------------------------------------------------------------------------
+
+@app.route("/admin")
+def admin_page():
+    if not ADMIN_ENABLED:
+        return (
+            "Admin panel is off. It only works on your own PC (not on the public "
+            "Render website), and you turn it on by setting NOVIQ_ENABLE_ADMIN=true "
+            "before running 'python app.py' locally. See README.md.",
+            404,
+        )
+    return send_from_directory(app.static_folder, "admin.html")
+
+
+@app.route("/api/admin/status")
+def api_admin_status():
+    return jsonify({
+        "enabled": ADMIN_ENABLED,
+        "running": _admin_running["active"],
+        "started_at": _admin_running["started_at"],
+    })
+
+
+def _guard_admin():
+    if not ADMIN_ENABLED:
+        return jsonify({"error": "Admin panel is disabled on this deployment."}), 403
+    return None
+
+
+@app.route("/api/admin/log")
+def api_admin_log():
+    guard = _guard_admin()
+    if guard:
+        return guard
+    n = min(int(request.args.get("lines", 200)), 2000)
+    try:
+        if not os.path.exists(LOG_PATH):
+            return jsonify({"lines": []})
+        with open(LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+        return jsonify({"lines": [l.rstrip("\n") for l in all_lines[-n:]]})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+def _run_pipeline_in_background(target_date):
+    try:
+        _admin_running["active"] = True
+        _admin_running["started_at"] = datetime.now().isoformat()
+        if target_date is None:
+            nightly_run.run_nightly()
+        else:
+            nightly_run.run_for_date(target_date)
+    finally:
+        _admin_running["active"] = False
+        _admin_lock.release()
+
+
+@app.route("/api/admin/run", methods=["POST"])
+def api_admin_run():
+    guard = _guard_admin()
+    if guard:
+        return guard
+
+    if not _admin_lock.acquire(blocking=False):
+        return jsonify({"error": "A pipeline run is already in progress. Check the log."}), 409
+
+    data = request.get_json(force=True, silent=True) or {}
+    date_str = (data.get("date") or "").strip()
+    target_date = None
+    if date_str:
+        try:
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            _admin_lock.release()
+            return jsonify({"error": "Date must be in YYYY-MM-DD format."}), 400
+
+    thread = threading.Thread(target=_run_pipeline_in_background, args=(target_date,), daemon=True)
+    thread.start()
+
+    return jsonify({
+        "ok": True,
+        "message": (
+            f"Started running the pipeline for {target_date} - check the log below for progress."
+            if target_date else
+            "Started running tonight's pipeline (yesterday's date) - check the log below for progress."
+        ),
+    })
 
 
 if __name__ == "__main__":
