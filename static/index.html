@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Noviq DLA Brain</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">N</div>
+      <div class="brand-name">Noviq<br><span>DLA Brain</span></div>
+    </div>
+    <nav class="nav">
+      <a href="#" class="nav-item" data-disabled>Dashboard</a>
+      <a href="#" class="nav-item active">DIBBS RFQs</a>
+      <a href="#" class="nav-item" data-disabled>RFQ Baskets</a>
+      <a href="#" class="nav-item" data-disabled>Quote Recorder</a>
+      <a href="#" class="nav-item" data-disabled>Vendors</a>
+      <a href="#" class="nav-item" data-disabled>Intel Sources</a>
+      <a href="#" class="nav-item" data-disabled>Reports</a>
+      <a href="#" class="nav-item" data-disabled>Settings</a>
+    </nav>
+    <div class="sidebar-footer">Burhani Enterprises Inc</div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+
+    <header class="topbar">
+      <div class="topbar-title">
+        <h1>DIBBS RFQs</h1>
+        <span id="lastUpdated" class="last-updated">Last updated: —</span>
+      </div>
+      <div class="topbar-search">
+        <input type="text" id="searchInput" placeholder="Search NSN, part number, description, CAGE, vendor, solicitation #...">
+        <button id="searchBtn" class="btn btn-primary">Search</button>
+      </div>
+    </header>
+
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-tab="CURRENT">Current <span class="tab-count" id="count-CURRENT"></span></button>
+      <button class="tab" data-tab="FUTURE">Future <span class="tab-count" id="count-FUTURE"></span></button>
+      <button class="tab" data-tab="OLD">Old / Extended <span class="tab-count" id="count-OLD"></span></button>
+    </div>
+
+    <div class="filter-bar">
+      <div class="filter-field">
+        <label>Basket</label>
+        <select id="basketFilter">
+          <option value="">All (no basket filter)</option>
+        </select>
+      </div>
+      <div class="filter-field">
+        <label>Sort By</label>
+        <select id="sortBy">
+          <option value="return_by_date">Return By Date</option>
+          <option value="days_remaining">Days Remaining</option>
+          <option value="estimated_value">Estimated Value</option>
+          <option value="last_award_date">Last Award Date</option>
+          <option value="last_unit_price">Last Unit Price</option>
+          <option value="mcrl_count">MCRL Count</option>
+          <option value="hist_vendor_count">Hist. Vendors</option>
+          <option value="delivery_days">Delivery Days</option>
+          <option value="nsn">NSN</option>
+          <option value="qty">Qty</option>
+          <option value="solicitation_number">Solicitation #</option>
+        </select>
+      </div>
+      <div class="filter-field">
+        <label>AMSC (multi)</label>
+        <select id="amscFilter" multiple size="4">
+          <option value="G">G</option>
+          <option value="C">C</option>
+          <option value="B">B</option>
+          <option value="D">D</option>
+          <option value="H">H</option>
+          <option value="Z">Z</option>
+        </select>
+      </div>
+      <div class="filter-field">
+        <label>Set Aside (multi)</label>
+        <select id="setAsideFilter" multiple size="4">
+          <option value="N">Unrestricted</option>
+          <option value="Y">Small Business</option>
+          <option value="H">HubZone</option>
+          <option value="R">SDVOSB</option>
+          <option value="L">8(a)</option>
+          <option value="A">WOSB</option>
+          <option value="E">EDWOSB</option>
+        </select>
+      </div>
+      <div class="filter-field">
+        <label>NSN contains</label>
+        <input type="text" id="nsnFilter" placeholder="e.g. 5330">
+      </div>
+      <div class="filter-field">
+        <label>CAGE / Vendor contains</label>
+        <input type="text" id="cageFilter" placeholder="CAGE code or company name">
+      </div>
+      <div class="filter-field checkbox-field">
+        <label><input type="checkbox" id="quotedFilter"> Prev. Quoted only</label>
+      </div>
+      <div class="filter-actions">
+        <button id="moreFiltersBtn" class="btn btn-secondary">More filters &#9662;</button>
+        <button id="applyBtn" class="btn btn-primary">Apply</button>
+        <button id="clearBtn" class="btn btn-secondary">Clear</button>
+      </div>
+    </div>
+
+    <div class="filter-bar" id="moreFiltersBar" style="display:none;">
+      <div class="filter-field">
+        <label>Est. Value $ min</label>
+        <input type="number" id="estValueMin" step="0.01">
+      </div>
+      <div class="filter-field">
+        <label>Est. Value $ max</label>
+        <input type="number" id="estValueMax" step="0.01">
+      </div>
+      <div class="filter-field">
+        <label>Return-By From</label>
+        <input type="date" id="returnByFrom">
+      </div>
+      <div class="filter-field">
+        <label>Return-By To</label>
+        <input type="date" id="returnByTo">
+      </div>
+      <div class="filter-field">
+        <label>Delivery Days min</label>
+        <input type="number" id="deliveryDaysMin" step="1">
+      </div>
+      <div class="filter-field">
+        <label>Delivery Days max</label>
+        <input type="number" id="deliveryDaysMax" step="1">
+      </div>
+      <div class="filter-field">
+        <label>Qualified Sources min</label>
+        <input type="number" id="mcrlMin" step="1">
+      </div>
+      <div class="filter-field">
+        <label>Last Award Date From</label>
+        <input type="date" id="lastAwardFrom">
+      </div>
+      <div class="filter-field">
+        <label>Last Award Date To</label>
+        <input type="date" id="lastAwardTo">
+      </div>
+      <div class="filter-field">
+        <label>Last Unit Price $ min</label>
+        <input type="number" id="lastPriceMin" step="0.01">
+      </div>
+      <div class="filter-field">
+        <label>Last Unit Price $ max</label>
+        <input type="number" id="lastPriceMax" step="0.01">
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="rfqTable">
+        <thead>
+          <tr>
+            <th class="col-check"><input type="checkbox" id="selectAll"></th>
+            <th>#</th>
+            <th>RFQ#</th>
+            <th>Solicitation#</th>
+            <th>NSN</th>
+            <th>Description</th>
+            <th>Qty</th>
+            <th>AMSC</th>
+            <th>Set Aside</th>
+            <th>Return By</th>
+            <th>Days Left</th>
+            <th>Last Award</th>
+            <th>Last Unit Price</th>
+            <th>Est. Value</th>
+            <th>MCRL</th>
+            <th>Hist. Vendors</th>
+            <th>Prev. Quoted</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="rfqTableBody">
+          <tr><td colspan="17" class="empty-row">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pagination">
+      <button id="prevPage" class="btn btn-secondary">&larr; Prev</button>
+      <span id="pageInfo">Page 1</span>
+      <button id="nextPage" class="btn btn-secondary">Next &rarr;</button>
+    </div>
+
+  </main>
+
+  <!-- Detail panel -->
+  <div id="detailOverlay" class="detail-overlay hidden">
+    <div class="detail-panel">
+      <button id="closeDetail" class="detail-close">&times;</button>
+      <div id="detailContent">Loading…</div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast hidden"></div>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>

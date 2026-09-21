@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+debug_html/
+downloaded/
+nightly_run.log
+.env
+*.zip
+*.txt.bak
