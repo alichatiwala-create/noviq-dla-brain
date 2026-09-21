@@ -311,6 +311,34 @@ def api_admin_run():
     })
 
 
+def _run_today_check_in_background():
+    try:
+        _admin_running["active"] = True
+        _admin_running["started_at"] = datetime.now().isoformat()
+        nightly_run.run_today_live_check()
+    finally:
+        _admin_running["active"] = False
+        _admin_lock.release()
+
+
+@app.route("/api/admin/run-today-check", methods=["POST"])
+def api_admin_run_today_check():
+    guard = _guard_admin()
+    if guard:
+        return guard
+
+    if not _admin_lock.acquire(blocking=False):
+        return jsonify({"error": "A pipeline run is already in progress. Check the log."}), 409
+
+    thread = threading.Thread(target=_run_today_check_in_background, daemon=True)
+    thread.start()
+
+    return jsonify({
+        "ok": True,
+        "message": "Checking DIBBS's live RFQ listing for today - check the log below for progress.",
+    })
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     debug = os.environ.get("FLASK_DEBUG", "true").lower() == "true"

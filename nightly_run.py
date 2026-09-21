@@ -150,6 +150,41 @@ def run_nightly():
     return outcome["ok"]
 
 
+def run_today_live_check():
+    """
+    The INTRADAY entry point - meant to run every few hours during the day,
+    not just once at night. DIBBS's official archive file for TODAY never
+    exists yet (it only shows up as "yesterday's file" the next morning),
+    but DIBBS's own live "Recent RFQs" page already shows today's
+    solicitations as they get posted throughout the day. So instead of
+    waiting until tomorrow night to see today's RFQs, this checks the live
+    listing for TODAY right now and saves whatever's there - through the
+    same safe upsert keys as everything else, so running this every few
+    hours (and then having tonight's real run see the same solicitations
+    again) never creates duplicates, it just confirms/updates them.
+
+    This is intentionally lightweight - no big zip downloads, just the
+    live RFQ listing pages for one date - so it's fine to run often.
+    """
+    target_date = date.today()
+    log.info(f"=== Intraday live-RFQ check starting for {target_date} ===")
+    conn = db.get_connection()
+    try:
+        counts = rfq_live_fallback.run_fallback(conn, target_date)
+    finally:
+        conn.close()
+    log.info(
+        f"Intraday check for {target_date}: found {counts['rows_found']} row(s) - "
+        f"{counts['solicitations_new']} new, {counts['solicitations_seen']} already known, "
+        f"{counts['lines_new']} new line(s), {counts['errors']} error(s)."
+    )
+    log.info(f"=== Intraday live-RFQ check finished for {target_date} ===")
+    return counts
+
+
 if __name__ == "__main__":
+    if "--today-only" in sys.argv:
+        run_today_live_check()
+        sys.exit(0)
     ok = run_nightly()
     sys.exit(0 if ok else 1)

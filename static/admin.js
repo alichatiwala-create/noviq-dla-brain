@@ -79,6 +79,23 @@ async function triggerRun(dateStr) {
   }
 }
 
+async function triggerTodayCheck() {
+  setStatus("Starting...", "busy");
+  try {
+    const res = await fetch("/api/admin/run-today-check", { method: "POST" });
+    const data = await res.json();
+    if (data.error) {
+      setStatus(data.error, "err");
+      return;
+    }
+    setStatus(data.message, "busy");
+    startPolling();
+  } catch (e) {
+    setStatus("Couldn't reach the server: " + e, "err");
+  }
+}
+
+document.getElementById("btn-run-today-check").addEventListener("click", triggerTodayCheck);
 document.getElementById("btn-run-tonight").addEventListener("click", () => triggerRun(null));
 document.getElementById("btn-run-date").addEventListener("click", () => {
   const val = document.getElementById("date-input").value;

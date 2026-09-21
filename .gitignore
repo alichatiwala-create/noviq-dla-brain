@@ -8,3 +8,4 @@ nightly_run.log
 *.txt.bak
 run_nightly.bat
 nightly_task_scheduler.log
+run_today_check.bat

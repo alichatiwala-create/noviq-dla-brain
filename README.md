@@ -213,6 +213,27 @@ Admin page described below, which shows the same log in your browser.
 `run_nightly.bat` yourself, or right-click the task in Task Scheduler and
 choose "Run".
 
+### Checking more often during the day (not just once a night)
+
+DIBBS's official archive file for TODAY never exists until tomorrow
+morning - but DIBBS's own live "Recent RFQs" page already shows today's
+solicitations as they get posted. So set up a SECOND, separate Task
+Scheduler task for `run_today_check.bat` (same folder), but on a
+**repeating** trigger instead of once-daily:
+
+1. Create Basic Task again, name it "Noviq DLA Brain - Intraday RFQ Check".
+2. Trigger: **Daily**, starting around 8:00 AM.
+3. On the trigger's summary screen (or by editing the trigger afterward),
+   check **"Repeat task every"** and set it to something like **3 hours**,
+   **for a duration of** 10 hours (covers a normal workday).
+4. Action: **Start a program** -> Browse to `run_today_check.bat`.
+
+This is a light check (just the live listing, no big file downloads), so
+it's fine to run it every few hours - and since it saves through the same
+no-duplicate rule as everything else, running it often and then having
+the once-a-night full run see the same solicitations again never creates
+duplicates, it just confirms them.
+
 ## The Admin page (run it / see logs from the website itself)
 
 This only works when you run the website on your own PC (it needs
