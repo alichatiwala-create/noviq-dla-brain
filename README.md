@@ -236,23 +236,51 @@ duplicates, it just confirms them.
 
 ## The Admin page (run it / see logs from the website itself)
 
-This only works when you run the website on your own PC (it needs
-Playwright and a route to DIBBS, neither of which the public Render copy
-has) - it's automatically OFF there, nothing to configure.
+This works BOTH locally and on the public Render website. It's
+password-protected and OFF by default - it needs two environment
+variables set before it turns on:
 
-To use it locally:
-1. In PowerShell, in this project folder, set one more environment
-   variable before starting the site:
-   ```
-   $env:NOVIQ_ENABLE_ADMIN = "true"
-   ```
-   (along with the NOVIQ_DB_* variables you already set for the database.)
-2. Run `python app.py` like normal.
-3. Open `http://localhost:5000/admin` in your browser.
+- `NOVIQ_ENABLE_ADMIN` = `true`
+- `NOVIQ_ADMIN_PASSWORD` = a real password you pick (don't reuse another
+  password - this one effectively controls a remote-code-execution style
+  button on a public website, so treat it seriously)
 
-From there you can:
+Without `NOVIQ_ADMIN_PASSWORD` set, the admin panel stays fully off no
+matter what - that's deliberate, so it's never accidentally left open.
+
+**To use it locally:** set both variables in PowerShell before running
+`python app.py` (along with the NOVIQ_DB_* variables you already set),
+then open `http://localhost:5000/admin` - your browser will ask for a
+username (just type `admin`) and the password you picked.
+
+**To use it on the real public website (Render):**
+1. In Render, go to your service -> **Environment**, and add:
+   - `NOVIQ_ENABLE_ADMIN` = `true`
+   - `NOVIQ_ADMIN_PASSWORD` = the same password you want to use
+2. Go to **Settings** -> **Build & Deploy**, and change the **Build
+   Command** to also install Chromium for Playwright:
+   ```
+   pip install -r requirements-deploy.txt && python -m playwright install --with-deps chromium
+   ```
+   This makes builds noticeably slower (Chromium is a real browser, ~300MB) -
+   that's expected.
+3. Save, then trigger a **Manual Deploy -> Deploy latest commit**.
+4. Once it's live, go to `https://noviq-dla-brain.onrender.com/admin` -
+   your browser will ask for the same `admin` / password login.
+
+**Important trade-off to know about:** Render's free tier only has 512MB
+of memory, and running a real headless browser (Chromium, via Playwright)
+takes a meaningful chunk of that. Occasional clicks should be fine, but if
+you click a lot at once, or a run takes too long, the free tier might run
+out of memory and the run fails partway (you'll see it plainly in the log
+either way - it won't fail silently). If that starts happening regularly,
+the fix is upgrading Render's plan (more memory) rather than anything in
+the code.
+
+From the Admin page (local or Render, same either way) you can:
 - Click **"Run tonight's pipeline"** to run it right now instead of
   waiting for Task Scheduler.
+- Click **"Check today's live RFQs"** for the lightweight intraday check.
 - Pick any date and click **"Run for this date"** to backfill it - if
   DIBBS's file for that date is missing, it automatically falls back to
   the live RFQ listing scrape, safely (no duplicates once the real file

@@ -1,8 +1,9 @@
+import functools
 import os
 import threading
 from datetime import date, datetime
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory, Response
 
 import database
 
@@ -11,22 +12,56 @@ app = Flask(__name__, static_folder="static", static_url_path="")
 # ---------------------------------------------------------------------------
 # Admin panel (run the pipeline / see logs from the website itself)
 # ---------------------------------------------------------------------------
-# This ONLY works on a machine that has Playwright installed and can reach
-# DIBBS - i.e. your own PC, not the public Render-hosted copy (Render's
-# requirements-deploy.txt deliberately leaves Playwright out, and Render's
-# servers can't reach DIBBS anyway). So this whole panel is OFF by default,
-# and only turns on when NOVIQ_ENABLE_ADMIN=true is set in your own
-# PowerShell session before running app.py locally - it stays off on Render
-# automatically, with nothing extra to configure there.
+# This now runs on BOTH your PC and the public Render site. It needs two
+# things set as environment variables before it will turn on:
+#   NOVIQ_ENABLE_ADMIN    = true            (the on/off switch)
+#   NOVIQ_ADMIN_PASSWORD  = <a real password you pick>
+# Without NOVIQ_ADMIN_PASSWORD set, admin stays OFF no matter what - this
+# is deliberate, so it's never accidentally left wide open on a public URL.
+# Anyone loading /admin (or calling an /api/admin/* route) on either copy
+# will be asked for a username (just "admin") and that password.
 ADMIN_ENABLED = os.environ.get("NOVIQ_ENABLE_ADMIN", "false").strip().lower() == "true"
+ADMIN_PASSWORD = os.environ.get("NOVIQ_ADMIN_PASSWORD", "")
+ADMIN_ACTIVE = ADMIN_ENABLED and bool(ADMIN_PASSWORD)
 
 _admin_lock = threading.Lock()   # only one pipeline run at a time
 _admin_running = {"active": False, "started_at": None}
+_admin_import_error = None
 
-if ADMIN_ENABLED:
-    import db as legacy_db
-    import nightly_run
+if ADMIN_ACTIVE:
     LOG_PATH = os.path.join(os.path.dirname(__file__), "nightly_run.log")
+    try:
+        import db as legacy_db
+        import nightly_run
+    except Exception as e:
+        # Playwright/Chromium not installed correctly on this deployment yet
+        # (e.g. Render's build step hasn't run "playwright install" yet) -
+        # keep the whole site up and just show a clear error on the admin
+        # routes instead of crashing the entire app.
+        _admin_import_error = str(e)
+
+
+def _check_admin_auth(auth):
+    return auth and auth.username == "admin" and auth.password == ADMIN_PASSWORD
+
+
+def require_admin_auth(f):
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        if not ADMIN_ACTIVE:
+            return jsonify({"error": "Admin panel is disabled on this deployment."}), 403
+        auth = request.authorization
+        if not _check_admin_auth(auth):
+            return Response(
+                "Admin login required.", 401,
+                {"WWW-Authenticate": 'Basic realm="Noviq DLA Brain Admin"'},
+            )
+        if _admin_import_error:
+            return jsonify({
+                "error": f"Admin panel is on, but couldn't load the pipeline code: {_admin_import_error}"
+            }), 500
+        return f(*args, **kwargs)
+    return wrapper
 
 
 @app.route("/")
@@ -224,37 +259,26 @@ def api_scrape():
 # ---------------------------------------------------------------------------
 
 @app.route("/admin")
+@require_admin_auth
 def admin_page():
-    if not ADMIN_ENABLED:
-        return (
-            "Admin panel is off. It only works on your own PC (not on the public "
-            "Render website), and you turn it on by setting NOVIQ_ENABLE_ADMIN=true "
-            "before running 'python app.py' locally. See README.md.",
-            404,
-        )
     return send_from_directory(app.static_folder, "admin.html")
 
 
 @app.route("/api/admin/status")
 def api_admin_status():
+    # Deliberately NOT password-gated - it only reveals whether the panel
+    # exists and whether something is running, nothing sensitive, and the
+    # Admin page's own JS polls this before you've logged in yet.
     return jsonify({
-        "enabled": ADMIN_ENABLED,
+        "enabled": ADMIN_ACTIVE,
         "running": _admin_running["active"],
         "started_at": _admin_running["started_at"],
     })
 
 
-def _guard_admin():
-    if not ADMIN_ENABLED:
-        return jsonify({"error": "Admin panel is disabled on this deployment."}), 403
-    return None
-
-
 @app.route("/api/admin/log")
+@require_admin_auth
 def api_admin_log():
-    guard = _guard_admin()
-    if guard:
-        return guard
     n = min(int(request.args.get("lines", 200)), 2000)
     try:
         if not os.path.exists(LOG_PATH):
@@ -280,11 +304,8 @@ def _run_pipeline_in_background(target_date):
 
 
 @app.route("/api/admin/run", methods=["POST"])
+@require_admin_auth
 def api_admin_run():
-    guard = _guard_admin()
-    if guard:
-        return guard
-
     if not _admin_lock.acquire(blocking=False):
         return jsonify({"error": "A pipeline run is already in progress. Check the log."}), 409
 
@@ -322,11 +343,8 @@ def _run_today_check_in_background():
 
 
 @app.route("/api/admin/run-today-check", methods=["POST"])
+@require_admin_auth
 def api_admin_run_today_check():
-    guard = _guard_admin()
-    if guard:
-        return guard
-
     if not _admin_lock.acquire(blocking=False):
         return jsonify({"error": "A pipeline run is already in progress. Check the log."}), 409
 
