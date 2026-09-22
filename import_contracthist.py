@@ -55,7 +55,7 @@ import sys
 import zipfile
 from datetime import datetime
 
-from database import get_connection
+import db
 
 
 def get_active_nsns(conn):
@@ -165,16 +165,12 @@ def save_row(conn, row, source_file):
     return "already_complete"
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("zip_path", help="Path to the Contracthist zip file you downloaded")
-    args = parser.parse_args()
-
-    conn = get_connection()
+def run(zip_path):
+    conn = db.get_connection()
     active_nsns = get_active_nsns(conn)
     print(f"Loaded {len(active_nsns)} distinct NSN(s) from your dashboard.\n")
 
-    reader_file = open_data_file(args.zip_path)
+    reader_file = open_data_file(zip_path)
     reader = csv.DictReader(reader_file, delimiter="|")
 
     total_rows = 0
@@ -195,7 +191,7 @@ def main():
 
         total_matched += 1
         try:
-            result = save_row(conn, row, args.zip_path.split("/")[-1].split("\\")[-1])
+            result = save_row(conn, row, zip_path.split("/")[-1].split("\\")[-1])
             if result == "new":
                 total_new += 1
             elif result == "filled_in":
@@ -216,6 +212,13 @@ def main():
     print(f"Skipped (missing NSN/contract #): {total_skipped}")
     print("\nDone. Refresh your dashboard - quantity and unit price should now show up")
     print("for a lot more NSNs, without needing to read a single PDF.")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("zip_path", help="Path to the Contracthist zip file you downloaded")
+    args = parser.parse_args()
+    db.run_with_retries(run, args.zip_path)
 
 
 if __name__ == "__main__":
