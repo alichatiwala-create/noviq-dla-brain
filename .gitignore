@@ -12,6 +12,7 @@ run_today_check.bat
 run_app.bat
 run_import_management_reference.bat
 run_import_current_awards.bat
+ca_import.log
 contracthist_archive/
 contracthist_import.log
 run_import_contracthist_all_years.bat

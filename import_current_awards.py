@@ -444,6 +444,13 @@ def main():
                             pdf_count += 1
                         time.sleep(0.3)
                 except Exception as e:
+                    # A failed INSERT/UPDATE leaves the whole connection's
+                    # transaction "aborted" in Postgres - every subsequent
+                    # save on this same connection would silently fail with
+                    # "current transaction is aborted" until we roll back,
+                    # so without this a single bad row would quietly break
+                    # saving for the rest of the entire run.
+                    conn.rollback()
                     print(f"\n    (error saving a row for {nsn}: {e})")
 
             total_new += new_count
