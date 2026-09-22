@@ -173,7 +173,6 @@
       <table id="rfqTable">
         <thead>
           <tr>
-            <th class="col-check"><input type="checkbox" id="selectAll"></th>
             <th>#</th>
             <th>RFQ#</th>
             <th>Solicitation#</th>
@@ -182,8 +181,6 @@
             <th>Qty</th>
             <th>AMSC</th>
             <th>Set Aside</th>
-            <th>Return By</th>
-            <th>Days Left</th>
             <th>Last Award</th>
             <th>Last Unit Price</th>
             <th>Est. Value</th>
@@ -194,7 +191,7 @@
           </tr>
         </thead>
         <tbody id="rfqTableBody">
-          <tr><td colspan="17" class="empty-row">Loading…</td></tr>
+          <tr><td colspan="15" class="empty-row">Loading…</td></tr>
         </tbody>
       </table>
     </div>
@@ -205,15 +202,21 @@
       <button id="nextPage" class="btn btn-secondary">Next &rarr;</button>
     </div>
 
-  </main>
-
-  <!-- Detail panel -->
-  <div id="detailOverlay" class="detail-overlay hidden">
-    <div class="detail-panel">
-      <button id="closeDetail" class="detail-close">&times;</button>
-      <div id="detailContent">Loading…</div>
+    <!-- Inline detail panel (replaces the old modal overlay) -->
+    <div id="detailSection" class="detail-section hidden">
+      <div class="detail-nav">
+        <button id="detailPrev" class="btn btn-secondary">&larr; Previous</button>
+        <div class="detail-nav-info">
+          <span id="detailRfqLabel" class="detail-rfq-label">—</span>
+          <span id="detailPosition" class="detail-position">—</span>
+        </div>
+        <button id="detailNext" class="btn btn-secondary">Next &rarr;</button>
+        <button id="detailClose" class="detail-close-btn" type="button" title="Close">&times;</button>
+      </div>
+      <div id="detailContent" class="detail-grid">Loading…</div>
     </div>
-  </div>
+
+  </main>
 
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>

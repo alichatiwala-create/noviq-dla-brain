@@ -16,6 +16,9 @@ const state = {
   },
   total: 0,
   baskets: [],
+  lastRows: [],
+  detailIdx: -1,
+  detailId: null,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -116,11 +119,10 @@ function rowHtml(r, idx) {
     : `<span class="value-na">N/A</span>`;
   const lastPrice = r.last_award_price !== null ? fmtMoney(r.last_award_price) : "—";
   const lastAward = r.last_award_date ? fmtDate(r.last_award_date) : "—";
-  const inAnyBasket = r.basket_ids && r.basket_ids.length > 0;
+  const isSelected = state.detailId !== null && String(state.detailId) === String(r.id);
 
   return `
-    <tr data-id="${r.id}">
-      <td><input type="checkbox" class="row-check" data-id="${r.id}" ${inAnyBasket ? "checked" : ""}></td>
+    <tr data-id="${r.id}" class="${isSelected ? "row-selected" : ""}">
       <td>${idx}</td>
       <td>${r.rfq_number || "—"}</td>
       <td>${r.solicitation_number}</td>
@@ -129,8 +131,6 @@ function rowHtml(r, idx) {
       <td>${r.quantity ?? "—"}</td>
       <td>${r.amsc || "—"}</td>
       <td>${r.set_aside_label || "—"}</td>
-      <td>${fmtDate(r.return_by_date)}</td>
-      <td>${daysRemainingBadge(r.days_remaining)}</td>
       <td>${lastAward}</td>
       <td>${lastPrice}</td>
       <td>${est}</td>
@@ -144,7 +144,7 @@ function rowHtml(r, idx) {
 
 async function loadRfqs() {
   const tbody = $("#rfqTableBody");
-  tbody.innerHTML = `<tr><td colspan="17" class="empty-row">Loading…</td></tr>`;
+  tbody.innerHTML = `<tr><td colspan="15" class="empty-row">Loading…</td></tr>`;
 
   const params = new URLSearchParams({
     tab: state.tab,
@@ -175,8 +175,9 @@ async function loadRfqs() {
   try {
     const data = await api(`/api/rfqs?${params.toString()}`);
     state.total = data.total;
+    state.lastRows = data.rows;
     if (data.rows.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="17" class="empty-row">No RFQs match these filters.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="15" class="empty-row">No RFQs match these filters.</td></tr>`;
     } else {
       const startIdx = (state.page - 1) * state.pageSize + 1;
       tbody.innerHTML = data.rows.map((r, i) => rowHtml(r, startIdx + i)).join("");
@@ -184,51 +185,16 @@ async function loadRfqs() {
     const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
     $("#pageInfo").textContent = `Page ${state.page} of ${totalPages} (${state.total} total)`;
 
-    $$(".row-check").forEach((cb) => {
-      cb.addEventListener("click", (e) => e.stopPropagation());
-      cb.addEventListener("change", onRowCheckToggle);
-    });
-    $$("#rfqTableBody tr[data-id]").forEach((tr) => {
-      tr.addEventListener("click", () => openDetail(tr.dataset.id));
+    $$("#rfqTableBody tr[data-id]").forEach((tr, i) => {
+      tr.addEventListener("click", () => openDetailAt(i));
     });
   } catch (e) {
-    tbody.innerHTML = `<tr><td colspan="17" class="empty-row">Error loading RFQs: ${e.message}</td></tr>`;
-  }
-}
-
-async function onRowCheckToggle(e) {
-  const lineId = e.target.dataset.id;
-  const checked = e.target.checked;
-  const basketId = state.filters.basket_id || (state.baskets[0] && state.baskets[0].id);
-  if (!basketId) {
-    showToast("Create a basket first (use the Basket dropdown).");
-    e.target.checked = !checked;
-    return;
-  }
-  try {
-    if (checked) {
-      await api("/api/basket-items", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ line_id: Number(lineId), basket_id: Number(basketId) }),
-      });
-      showToast("Added to basket");
-    } else {
-      await api("/api/basket-items", {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ line_id: Number(lineId), basket_id: Number(basketId) }),
-      });
-      showToast("Removed from basket");
-    }
-    loadBaskets();
-  } catch (err) {
-    showToast("Error: " + err.message);
+    tbody.innerHTML = `<tr><td colspan="15" class="empty-row">Error loading RFQs: ${e.message}</td></tr>`;
   }
 }
 
 // ---------------------------------------------------------------------------
-// Detail panel
+// Detail panel (inline, below the table, with Previous/Next navigation)
 // ---------------------------------------------------------------------------
 
 function mcrlRowsHtml(sources) {
@@ -353,8 +319,6 @@ function detailHtml(r) {
         <div class="kv"><label>Delivery Days</label><span>${r.delivery_days ?? "—"}</span></div>
         <div class="kv"><label>AMSC</label><span>${r.amsc || "—"}</span></div>
         <div class="kv"><label>Set Aside</label><span>${r.set_aside_label || "—"}${r.set_aside_pct ? " (" + r.set_aside_pct + "%)" : ""}</span></div>
-        <div class="kv"><label>Inspection</label><span class="value-na">— (needs DIBBS detail-page scrape)</span></div>
-        <div class="kv"><label>Packaging</label><span class="value-na">— (needs DIBBS detail-page scrape)</span></div>
         <div class="kv"><label>Status</label><span>${statusBadge(r.date_status)}</span></div>
         <div class="kv"><label>Times Posted</label><span>${r.times_posted ?? "—"}</span></div>
       </div>
@@ -369,6 +333,7 @@ function detailHtml(r) {
         <div class="kv"><label>Management Price (DRN 7075)</label><span>${r.management_price !== null ? fmtMoney(r.management_price) : "—"}</span></div>
         <div class="kv"><label>Estimated Value</label><span>${r.estimated_value !== null ? fmtMoney(r.estimated_value) : "N/A"}</span></div>
         <div class="kv"><label>Our Last Quote</label><span>${r.our_last_quote_price !== null && r.our_last_quote_price !== undefined ? fmtMoney(r.our_last_quote_price) + " on " + fmtDate(r.our_last_quote_date) : "Not quoted before"}</span></div>
+        <div class="kv"><label>Previously Quoted</label><span>${yesNoBadge(r.quoted)}</span></div>
       </div>
       <div class="basis-note">Basis: ${r.estimated_value_basis}</div>
     </div>
@@ -404,7 +369,18 @@ function detailHtml(r) {
         <div class="kv"><label>Total RFQ Sell Value (x Qty)</label><span id="calcTotalSell">—</span></div>
         <div class="kv"><label>Total Expected Profit (x Qty)</label><span id="calcProfitTotal">—</span></div>
       </div>
-      <div class="basis-note">Markup % defaults to 0. Enter Unit Cost + Markup % for a suggested price, or Unit Cost + your own Quote Price for real margin/profit. Qty defaults to this RFQ's quantity but you can override it. Nothing here is saved — it resets when you close this panel.</div>
+      <div class="basis-note">Markup % defaults to 0. Enter Unit Cost + Markup % for a suggested price, or Unit Cost + your own Quote Price for real margin/profit. Qty defaults to this RFQ's quantity but you can override it. Nothing here is saved — it resets when you switch rows.</div>
+    </div>
+
+    <div class="card">
+      <h3>MCRL-Qualified Sources</h3>
+      ${mcrlRowsHtml(r.mcrl_sources)}
+    </div>
+
+    <div class="card">
+      <h3>Procurement History</h3>
+      ${historyStatsHtml(r.history_stats)}
+      ${historyRowsHtml(r.procurement_history)}
     </div>
 
     <div class="card">
@@ -420,27 +396,9 @@ function detailHtml(r) {
     </div>
 
     <div class="card">
-      <h3>Flags</h3>
-      <div class="kv-grid">
-        <div class="kv"><label>Previously Quoted</label><span>${yesNoBadge(r.quoted)}</span></div>
-        <div class="kv"><label>In Basket(s)</label><span>${(r.baskets || []).map((b) => b.name).join(", ") || "None"}</span></div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h3>MCRL / Qualified Sources</h3>
-      ${mcrlRowsHtml(r.mcrl_sources)}
-    </div>
-
-    <div class="card">
-      <h3>Award &amp; Vendor History</h3>
-      ${historyStatsHtml(r.history_stats)}
-      ${historyRowsHtml(r.procurement_history)}
-    </div>
-
-    <div class="card">
       <h3>Additional Information</h3>
       <div class="kv-grid">
+        <div class="kv"><label>In Basket(s)</label><span>${(r.baskets || []).map((b) => b.name).join(", ") || "None"}</span></div>
         <div class="kv"><label>Price Reason Code</label><span class="value-na">—</span></div>
         <div class="kv"><label>AAC</label><span class="value-na">—</span></div>
         <div class="kv"><label>SOS</label><span class="value-na">—</span></div>
@@ -517,99 +475,118 @@ function wireCalculator() {
   recalc();
 }
 
-async function openDetail(lineId) {
-  const overlay = $("#detailOverlay");
+function wireDetailActions() {
+  $("#toggleQuotedBtn").addEventListener("click", async (e) => {
+    const id = e.target.dataset.id;
+    const currentlyQuoted = e.target.dataset.quoted === "true";
+    try {
+      await api(`/api/rfqs/${id}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quoted: !currentlyQuoted }),
+      });
+      showToast("Updated");
+      renderDetail(id);
+      loadRfqs();
+    } catch (err) {
+      showToast("Error: " + err.message);
+    }
+  });
+
+  $("#addNoteBtn").addEventListener("click", async (e) => {
+    const id = e.target.dataset.id;
+    const note = $("#noteInput").value.trim();
+    if (!note) return;
+    try {
+      await api(`/api/rfqs/${id}/notes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note }),
+      });
+      showToast("Note added");
+      renderDetail(id);
+    } catch (err) {
+      showToast("Error: " + err.message);
+    }
+  });
+
+  $("#basketSelect").addEventListener("change", async (e) => {
+    const basketId = e.target.value;
+    const id = e.target.dataset.id;
+    if (!basketId) return;
+    try {
+      await api("/api/basket-items", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ line_id: Number(id), basket_id: Number(basketId) }),
+      });
+      showToast("Added to basket");
+      renderDetail(id);
+      loadBaskets();
+    } catch (err) {
+      showToast("Error: " + err.message);
+    }
+  });
+
+  $("#saveQuoteBtn").addEventListener("click", async (e) => {
+    const id = e.target.dataset.id;
+    const nsn = e.target.dataset.nsn;
+    const quotedBy = $("#quoteBy").value.trim();
+    const quotedPrice = $("#quotePrice").value;
+    const quotedDate = $("#quoteDate").value;
+    if (!quotedPrice) {
+      showToast("Enter a quote price first");
+      return;
+    }
+    try {
+      await api(`/api/rfqs/${id}/quotes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nsn, quoted_by: quotedBy || null,
+          quoted_price: Number(quotedPrice),
+          quoted_date: quotedDate || null,
+        }),
+      });
+      showToast("Quote saved");
+      renderDetail(id);
+      loadRfqs();
+    } catch (err) {
+      showToast("Error: " + err.message);
+    }
+  });
+}
+
+async function renderDetail(lineId) {
+  const section = $("#detailSection");
   const content = $("#detailContent");
-  overlay.classList.remove("hidden");
+  section.classList.remove("hidden");
   content.innerHTML = "Loading…";
+
+  const globalIdx = (state.page - 1) * state.pageSize + state.detailIdx + 1;
+  $("#detailPosition").textContent = state.total ? `${globalIdx} of ${state.total}` : "—";
+
   try {
     const r = await api(`/api/rfqs/${lineId}`);
+    $("#detailRfqLabel").innerHTML = `${r.solicitation_number}${r.rfq_number ? " (" + r.rfq_number + ")" : ""} &nbsp; ${statusBadge(r.date_status)}`;
     content.innerHTML = detailHtml(r);
-
     wireCalculator();
-
-    $("#toggleQuotedBtn").addEventListener("click", async (e) => {
-      const id = e.target.dataset.id;
-      const currentlyQuoted = e.target.dataset.quoted === "true";
-      try {
-        await api(`/api/rfqs/${id}/status`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ quoted: !currentlyQuoted }),
-        });
-        showToast("Updated");
-        openDetail(id);
-        loadRfqs();
-      } catch (err) {
-        showToast("Error: " + err.message);
-      }
-    });
-
-    $("#addNoteBtn").addEventListener("click", async (e) => {
-      const id = e.target.dataset.id;
-      const note = $("#noteInput").value.trim();
-      if (!note) return;
-      try {
-        await api(`/api/rfqs/${id}/notes`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ note }),
-        });
-        showToast("Note added");
-        openDetail(id);
-      } catch (err) {
-        showToast("Error: " + err.message);
-      }
-    });
-
-    $("#basketSelect").addEventListener("change", async (e) => {
-      const basketId = e.target.value;
-      const id = e.target.dataset.id;
-      if (!basketId) return;
-      try {
-        await api("/api/basket-items", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ line_id: Number(id), basket_id: Number(basketId) }),
-        });
-        showToast("Added to basket");
-        openDetail(id);
-        loadBaskets();
-      } catch (err) {
-        showToast("Error: " + err.message);
-      }
-    });
-
-    $("#saveQuoteBtn").addEventListener("click", async (e) => {
-      const id = e.target.dataset.id;
-      const nsn = e.target.dataset.nsn;
-      const quotedBy = $("#quoteBy").value.trim();
-      const quotedPrice = $("#quotePrice").value;
-      const quotedDate = $("#quoteDate").value;
-      if (!quotedPrice) {
-        showToast("Enter a quote price first");
-        return;
-      }
-      try {
-        await api(`/api/rfqs/${id}/quotes`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            nsn, quoted_by: quotedBy || null,
-            quoted_price: Number(quotedPrice),
-            quoted_date: quotedDate || null,
-          }),
-        });
-        showToast("Quote saved");
-        openDetail(id);
-        loadRfqs();
-      } catch (err) {
-        showToast("Error: " + err.message);
-      }
-    });
+    wireDetailActions();
   } catch (e) {
     content.innerHTML = `<div class="card">Error loading detail: ${e.message}</div>`;
   }
+}
+
+async function openDetailAt(localIdx) {
+  const row = state.lastRows[localIdx];
+  if (!row) return;
+  state.detailIdx = localIdx;
+  state.detailId = row.id;
+  $$("#rfqTableBody tr[data-id]").forEach((tr) => {
+    tr.classList.toggle("row-selected", String(tr.dataset.id) === String(row.id));
+  });
+  await renderDetail(row.id);
+  $("#detailSection").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 // ---------------------------------------------------------------------------
@@ -628,10 +605,10 @@ function wireEvents() {
   });
 
   $$("#rfqTable th").forEach((th, idx) => {
-    // columns after the checkbox/# are sortable via the Sort By dropdown already;
+    // columns after the "#" column are sortable via the Sort By dropdown already;
     // clicking a header just flips direction on the currently selected sort field
     th.addEventListener("click", () => {
-      if (idx < 2) return;
+      if (idx < 1) return;
       state.sortDir = state.sortDir === "asc" ? "desc" : "asc";
       loadRfqs();
     });
@@ -718,9 +695,34 @@ function wireEvents() {
     }
   });
 
-  $("#closeDetail").addEventListener("click", () => $("#detailOverlay").classList.add("hidden"));
-  $("#detailOverlay").addEventListener("click", (e) => {
-    if (e.target.id === "detailOverlay") $("#detailOverlay").classList.add("hidden");
+  $("#detailPrev").addEventListener("click", async () => {
+    if (state.detailIdx - 1 >= 0) {
+      await openDetailAt(state.detailIdx - 1);
+    } else if (state.page > 1) {
+      state.page -= 1;
+      await loadRfqs();
+      await openDetailAt(state.lastRows.length - 1);
+    }
+  });
+
+  $("#detailNext").addEventListener("click", async () => {
+    if (state.detailIdx + 1 < state.lastRows.length) {
+      await openDetailAt(state.detailIdx + 1);
+    } else {
+      const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
+      if (state.page < totalPages) {
+        state.page += 1;
+        await loadRfqs();
+        await openDetailAt(0);
+      }
+    }
+  });
+
+  $("#detailClose").addEventListener("click", () => {
+    $("#detailSection").classList.add("hidden");
+    state.detailId = null;
+    state.detailIdx = -1;
+    $$("#rfqTableBody tr[data-id]").forEach((tr) => tr.classList.remove("row-selected"));
   });
 
   wireBackfillControl();
