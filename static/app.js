@@ -722,6 +722,80 @@ function wireEvents() {
   $("#detailOverlay").addEventListener("click", (e) => {
     if (e.target.id === "detailOverlay") $("#detailOverlay").classList.add("hidden");
   });
+
+  wireBackfillControl();
+}
+
+// ---------------------------------------------------------------------------
+// Backfill a date (calls the same password-protected admin endpoint as the
+// /admin page - the browser will prompt for the admin login the first time,
+// then remembers it for the rest of the session).
+// ---------------------------------------------------------------------------
+
+let backfillPollTimer = null;
+
+function setBackfillStatus(text, kind) {
+  const el = $("#backfillStatus");
+  el.textContent = text;
+  el.className = "backfill-status" + (kind ? " " + kind : "");
+}
+
+async function pollBackfillStatus() {
+  try {
+    const res = await fetch("/api/admin/status");
+    const data = await res.json();
+    if (data.running) {
+      setBackfillStatus("Running...", "busy");
+      return;
+    }
+    if (backfillPollTimer) {
+      clearInterval(backfillPollTimer);
+      backfillPollTimer = null;
+      setBackfillStatus("Done - refreshing...", "ok");
+      await Promise.all([loadMeta(), loadRfqs()]);
+      setBackfillStatus("Done.", "ok");
+    }
+  } catch (e) {
+    // ignore transient errors while polling
+  }
+}
+
+function wireBackfillControl() {
+  const toggleBtn = $("#backfillToggle");
+  const panel = $("#backfillPanel");
+  const dateInput = $("#backfillDate");
+  const runBtn = $("#backfillRun");
+
+  toggleBtn.addEventListener("click", () => {
+    panel.hidden = !panel.hidden;
+  });
+
+  runBtn.addEventListener("click", async () => {
+    const dateStr = dateInput.value;
+    if (!dateStr) {
+      setBackfillStatus("Pick a date first.", "err");
+      return;
+    }
+    setBackfillStatus("Starting...", "busy");
+    try {
+      const res = await fetch("/api/admin/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: dateStr }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) {
+        setBackfillStatus(data.error || "Couldn't start the run.", "err");
+        return;
+      }
+      setBackfillStatus("Running...", "busy");
+      if (!backfillPollTimer) {
+        backfillPollTimer = setInterval(pollBackfillStatus, 3000);
+      }
+    } catch (e) {
+      setBackfillStatus("Couldn't reach the server: " + e.message, "err");
+    }
+  });
 }
 
 async function init() {

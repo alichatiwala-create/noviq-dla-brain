@@ -34,7 +34,17 @@
     <header class="topbar">
       <div class="topbar-title">
         <h1>DIBBS RFQs</h1>
-        <span id="lastUpdated" class="last-updated">Last updated: —</span>
+        <div class="last-updated-row">
+          <span id="lastUpdated" class="last-updated">Last updated: —</span>
+          <button id="backfillToggle" class="last-updated-btn" type="button" title="Pull in a specific date's RFQs from DIBBS">
+            &#128197; Backfill a date
+          </button>
+        </div>
+        <div id="backfillPanel" class="backfill-panel" hidden>
+          <input type="date" id="backfillDate">
+          <button id="backfillRun" class="btn btn-primary btn-sm">Run</button>
+          <span id="backfillStatus" class="backfill-status"></span>
+        </div>
       </div>
       <div class="topbar-search">
         <input type="text" id="searchInput" placeholder="Search NSN, part number, description, CAGE, vendor, solicitation #...">
