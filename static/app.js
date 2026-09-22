@@ -735,6 +735,7 @@ function wireEvents() {
 // ---------------------------------------------------------------------------
 
 let backfillPollTimer = null;
+let backfillLastDate = null;
 
 function setBackfillStatus(text, kind) {
   const el = $("#backfillStatus");
@@ -747,15 +748,17 @@ async function pollBackfillStatus() {
     const res = await fetch("/api/admin/status");
     const data = await res.json();
     if (data.running) {
-      setBackfillStatus("Running...", "busy");
+      const dateLabel = data.target_date ? ` for ${data.target_date}` : "";
+      setBackfillStatus(`Loading${dateLabel}...`, "busy");
       return;
     }
     if (backfillPollTimer) {
       clearInterval(backfillPollTimer);
       backfillPollTimer = null;
-      setBackfillStatus("Done - refreshing...", "ok");
+      const dateLabel = backfillLastDate ? ` ${backfillLastDate}` : "";
+      setBackfillStatus(`Loaded${dateLabel} - refreshing...`, "ok");
       await Promise.all([loadMeta(), loadRfqs()]);
-      setBackfillStatus("Done.", "ok");
+      setBackfillStatus(`Done - now showing${dateLabel}.`, "ok");
     }
   } catch (e) {
     // ignore transient errors while polling
@@ -778,7 +781,8 @@ function wireBackfillControl() {
       setBackfillStatus("Pick a date first.", "err");
       return;
     }
-    setBackfillStatus("Starting...", "busy");
+    backfillLastDate = dateStr;
+    setBackfillStatus(`Starting for ${dateStr}...`, "busy");
     try {
       const res = await fetch("/api/admin/run", {
         method: "POST",
@@ -790,7 +794,7 @@ function wireBackfillControl() {
         setBackfillStatus(data.error || "Couldn't start the run.", "err");
         return;
       }
-      setBackfillStatus("Running...", "busy");
+      setBackfillStatus(`Loading for ${dateStr}...`, "busy");
       if (!backfillPollTimer) {
         backfillPollTimer = setInterval(pollBackfillStatus, 3000);
       }

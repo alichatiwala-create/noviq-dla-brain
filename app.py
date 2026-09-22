@@ -25,7 +25,7 @@ ADMIN_PASSWORD = os.environ.get("NOVIQ_ADMIN_PASSWORD", "")
 ADMIN_ACTIVE = ADMIN_ENABLED and bool(ADMIN_PASSWORD)
 
 _admin_lock = threading.Lock()   # only one pipeline run at a time
-_admin_running = {"active": False, "started_at": None}
+_admin_running = {"active": False, "started_at": None, "target_date": None}
 _admin_import_error = None
 
 if ADMIN_ACTIVE:
@@ -273,6 +273,7 @@ def api_admin_status():
         "enabled": ADMIN_ACTIVE,
         "running": _admin_running["active"],
         "started_at": _admin_running["started_at"],
+        "target_date": _admin_running["target_date"],
     })
 
 
@@ -294,12 +295,14 @@ def _run_pipeline_in_background(target_date):
     try:
         _admin_running["active"] = True
         _admin_running["started_at"] = datetime.now().isoformat()
+        _admin_running["target_date"] = target_date.isoformat() if target_date else "yesterday (nightly default)"
         if target_date is None:
             nightly_run.run_nightly()
         else:
             nightly_run.run_for_date(target_date)
     finally:
         _admin_running["active"] = False
+        _admin_running["target_date"] = None
         _admin_lock.release()
 
 
