@@ -237,7 +237,12 @@ CREATE TABLE IF NOT EXISTS dla_award_history (
     source_file          TEXT NOT NULL,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (award_number)
+    -- Scoped by NSN, not global: one DLA contract/award can legitimately
+    -- cover multiple different NSN line items at once, so the same
+    -- award_number needs to be saveable once per NSN it applies to, not
+    -- just once ever. See migration_v5.sql for how this changed from an
+    -- earlier, too-strict UNIQUE (award_number).
+    UNIQUE (nsn, award_number)
 );
 
 CREATE INDEX IF NOT EXISTS idx_award_history_nsn_date ON dla_award_history(nsn, award_date DESC);
