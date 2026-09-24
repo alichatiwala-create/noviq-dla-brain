@@ -217,7 +217,7 @@ _BASE_SELECT = """
         s.times_posted,
         (sl.return_by_date - CURRENT_DATE) AS days_remaining,
         la.last_award_date,
-        la.last_award_price,
+        lap.last_award_price,
         la.last_award_cage,
         lav.company_name AS last_award_vendor_name,
         mp.unit_price AS management_price,
@@ -227,24 +227,40 @@ _BASE_SELECT = """
         lq.quoted_price AS our_last_quote_price,
         lq.quoted_date AS our_last_quote_date,
         CASE
-            WHEN la.last_award_price IS NOT NULL THEN la.last_award_price * sl.qty
+            WHEN lap.last_award_price IS NOT NULL THEN lap.last_award_price * sl.qty
             WHEN mp.unit_price IS NOT NULL THEN mp.unit_price * sl.qty
             ELSE NULL
         END AS estimated_value,
         CASE
-            WHEN la.last_award_price IS NOT NULL THEN 'Last award price x qty (source: ContractHist/Awards)'
+            WHEN lap.last_award_price IS NOT NULL THEN 'Last award price x qty (source: ContractHist/Awards)'
             WHEN mp.unit_price IS NOT NULL THEN 'Management price (DRN 7075) x qty (source: Management)'
             ELSE 'N/A - no award or management price on file'
         END AS estimated_value_basis
     FROM solicitation_lines sl
     JOIN solicitations s ON s.solicitation_number = sl.solicitation_number
     LEFT JOIN LATERAL (
-        SELECT unit_price AS last_award_price, award_date AS last_award_date, winning_cage AS last_award_cage
+        -- The most recent award of ANY kind for this NSN, for display (date/
+        -- vendor) - shown even if it happens to have no price on file, so the
+        -- "Last Award Date" column reflects real recent activity.
+        SELECT award_date AS last_award_date, winning_cage AS last_award_cage
         FROM dla_award_history dah
         WHERE dah.nsn = sl.nsn
         ORDER BY dah.award_date DESC
         LIMIT 1
     ) la ON TRUE
+    LEFT JOIN LATERAL (
+        -- The most recent award that actually HAS a price - used for the
+        -- price/value math. Some recent awards (esp. from the Current
+        -- Awards source) don't have a price yet, so picking strictly the
+        -- most recent award regardless of price was wrongly falling back
+        -- to the management price even when good award-price history
+        -- existed, just not on the very latest award.
+        SELECT unit_price AS last_award_price
+        FROM dla_award_history dah
+        WHERE dah.nsn = sl.nsn AND dah.unit_price IS NOT NULL
+        ORDER BY dah.award_date DESC
+        LIMIT 1
+    ) lap ON TRUE
     LEFT JOIN vendors lav ON lav.cage_code = la.last_award_cage
     LEFT JOIN management_price mp ON mp.niin = sl.niin
     LEFT JOIN LATERAL (
@@ -379,13 +395,15 @@ def list_rfqs(filters, sort_by="return_by_date", sort_dir="asc", page=1, page_si
 
     if filters.get("last_unit_price_min") is not None:
         where_clauses.append(
-            "(SELECT unit_price FROM dla_award_history WHERE nsn = sl.nsn ORDER BY award_date DESC LIMIT 1) >= %s"
+            "(SELECT unit_price FROM dla_award_history WHERE nsn = sl.nsn AND unit_price IS NOT NULL "
+            "ORDER BY award_date DESC LIMIT 1) >= %s"
         )
         params.append(filters["last_unit_price_min"])
 
     if filters.get("last_unit_price_max") is not None:
         where_clauses.append(
-            "(SELECT unit_price FROM dla_award_history WHERE nsn = sl.nsn ORDER BY award_date DESC LIMIT 1) <= %s"
+            "(SELECT unit_price FROM dla_award_history WHERE nsn = sl.nsn AND unit_price IS NOT NULL "
+            "ORDER BY award_date DESC LIMIT 1) <= %s"
         )
         params.append(filters["last_unit_price_max"])
 
