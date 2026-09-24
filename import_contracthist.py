@@ -64,19 +64,44 @@ def get_active_nsns(conn):
     return {r[0] for r in cur.fetchall()}
 
 
-def open_data_file(zip_path):
+def _find_text_readers(zf):
     """
-    Opens the single .txt file inside the given zip and returns a
-    line-by-line text reader for it (doesn't load the whole thing into
-    memory at once - these files can be 100+ MB uncompressed).
+    Recursively finds every .txt file inside a ZipFile, opening one level
+    of nested .zip files along the way - DLA doesn't package these the
+    same way every year: some years are a single flat .txt, some are one
+    .txt wrapped in an outer zip, and some years (seen for 2019, 2021,
+    2022, and 2020) bundle a WHOLE YEAR as twelve separate monthly .zip
+    files, each with its own .txt inside, all wrapped in one outer zip.
+    Returns a list of (name, text-reader) pairs - callers must process
+    every one of them, not just the first, or most of the year's data
+    gets silently skipped.
+    """
+    readers = []
+    for info in zf.infolist():
+        name = info.filename
+        if name.endswith("/"):
+            continue
+        if name.lower().endswith(".txt"):
+            readers.append((name, io.TextIOWrapper(zf.open(name, "r"), encoding="utf-8", errors="replace")))
+        elif name.lower().endswith(".zip"):
+            inner_zf = zipfile.ZipFile(io.BytesIO(zf.read(name)))
+            readers.extend(_find_text_readers(inner_zf))
+    return readers
+
+
+def open_data_files(zip_path):
+    """
+    Opens the given zip and returns every .txt data file inside it (see
+    _find_text_readers for why there can be more than one), each as a
+    line-by-line text reader (doesn't load anything fully into memory -
+    these files can be 100+ MB uncompressed each).
     """
     zf = zipfile.ZipFile(zip_path)
-    names = [n for n in zf.namelist() if n.lower().endswith(".txt")]
-    if not names:
-        print(f"Couldn't find a .txt file inside {zip_path} - is this the right zip?")
+    readers = _find_text_readers(zf)
+    if not readers:
+        print(f"Couldn't find any .txt file inside {zip_path} (including nested zips) - is this the right zip?")
         sys.exit(1)
-    inner = zf.open(names[0], "r")
-    return io.TextIOWrapper(inner, encoding="utf-8", errors="replace")
+    return readers
 
 
 def parse_qty_or_price(text):
@@ -170,8 +195,13 @@ def run(zip_path):
     active_nsns = get_active_nsns(conn)
     print(f"Loaded {len(active_nsns)} distinct NSN(s) from your dashboard.\n")
 
-    reader_file = open_data_file(zip_path)
-    reader = csv.DictReader(reader_file, delimiter="|")
+    source_file_label = zip_path.split("/")[-1].split("\\")[-1]
+    data_files = open_data_files(zip_path)
+    if len(data_files) > 1:
+        print(f"Found {len(data_files)} data file(s) inside this zip (some years bundle one file per month):")
+        for name, _ in data_files:
+            print(f"  - {name}")
+        print()
 
     total_rows = 0
     total_matched = 0
@@ -179,29 +209,40 @@ def run(zip_path):
     total_filled_in = 0
     total_already_complete = 0
     total_skipped = 0
+    total_errors = 0
 
-    for row in reader:
-        total_rows += 1
-        if total_rows % 100000 == 0:
-            print(f"  ...scanned {total_rows} rows so far ({total_matched} matched your NSNs)")
+    for name, reader_file in data_files:
+        reader = csv.DictReader(reader_file, delimiter="|")
+        for row in reader:
+            total_rows += 1
+            if total_rows % 100000 == 0:
+                print(f"  ...scanned {total_rows} rows so far ({total_matched} matched your NSNs)")
 
-        nsn = (row.get("NSN") or "").strip()
-        if nsn not in active_nsns:
-            continue
+            nsn = (row.get("NSN") or "").strip()
+            if nsn not in active_nsns:
+                continue
 
-        total_matched += 1
-        try:
-            result = save_row(conn, row, zip_path.split("/")[-1].split("\\")[-1])
-            if result == "new":
-                total_new += 1
-            elif result == "filled_in":
-                total_filled_in += 1
-            elif result == "already_complete":
-                total_already_complete += 1
-            else:
-                total_skipped += 1
-        except Exception as e:
-            print(f"  (error saving a row for NSN {nsn}: {e})")
+            total_matched += 1
+            try:
+                result = save_row(conn, row, source_file_label)
+                if result == "new":
+                    total_new += 1
+                elif result == "filled_in":
+                    total_filled_in += 1
+                elif result == "already_complete":
+                    total_already_complete += 1
+                else:
+                    total_skipped += 1
+            except Exception as e:
+                # A failed INSERT/UPDATE leaves the whole connection's
+                # transaction "aborted" in Postgres - every subsequent save
+                # on this same connection would silently fail with "current
+                # transaction is aborted" until we roll back, so without
+                # this a single bad row would quietly break saving for the
+                # rest of the entire file (this bit hard on 2023-2026).
+                conn.rollback()
+                total_errors += 1
+                print(f"  (error saving a row for NSN {nsn}: {e})")
 
     print("\n---- Summary ----")
     print(f"Total rows in file:              {total_rows}")
@@ -210,6 +251,7 @@ def run(zip_path):
     print(f"Existing awards filled in (qty/price added): {total_filled_in}")
     print(f"Already had qty/price (left alone): {total_already_complete}")
     print(f"Skipped (missing NSN/contract #): {total_skipped}")
+    print(f"Errors (row rolled back, didn't save): {total_errors}")
     print("\nDone. Refresh your dashboard - quantity and unit price should now show up")
     print("for a lot more NSNs, without needing to read a single PDF.")
 
