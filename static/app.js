@@ -726,6 +726,7 @@ function wireEvents() {
   });
 
   wireBackfillControl();
+  wireAdminPanel();
 }
 
 // ---------------------------------------------------------------------------
@@ -802,6 +803,131 @@ function wireBackfillControl() {
       setBackfillStatus("Couldn't reach the server: " + e.message, "err");
     }
   });
+}
+
+// ---------------------------------------------------------------------------
+// Admin tools modal (merged in from the old standalone /admin page - same
+// password-protected endpoints, the browser prompts for the admin login the
+// first time then remembers it for the rest of the session).
+// ---------------------------------------------------------------------------
+
+let adminPollTimer = null;
+
+function setAdminStatus(text, kind) {
+  const el = $("#admin-status-msg");
+  el.textContent = text;
+  el.className = "backfill-status" + (kind ? " " + kind : "");
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+async function refreshAdminLog() {
+  const logBox = $("#log-box");
+  try {
+    const res = await fetch("/api/admin/log?lines=300");
+    const data = await res.json();
+    if (data.error) {
+      logBox.textContent = "Error loading log: " + data.error;
+      return;
+    }
+    logBox.innerHTML = data.lines.map((line) => {
+      let cls = "";
+      if (line.includes(" WARNING ")) cls = "log-line-WARNING";
+      else if (line.includes(" ERROR ")) cls = "log-line-ERROR";
+      return `<span class="${cls}">${escapeHtml(line)}</span>`;
+    }).join("\n");
+    logBox.scrollTop = logBox.scrollHeight;
+  } catch (e) {
+    logBox.textContent = "Couldn't reach the server: " + e.message;
+  }
+}
+
+async function pollAdminStatus() {
+  try {
+    const res = await fetch("/api/admin/status");
+    const data = await res.json();
+    const liveDot = $("#log-live-dot");
+    if (data.running) {
+      liveDot.classList.remove("hidden");
+      const dateLabel = data.target_date ? ` (${data.target_date})` : "";
+      setAdminStatus(`A pipeline run is in progress${dateLabel}...`, "busy");
+      refreshAdminLog();
+    } else {
+      liveDot.classList.add("hidden");
+      if (adminPollTimer) {
+        clearInterval(adminPollTimer);
+        adminPollTimer = null;
+        setAdminStatus("Run finished - see the log below.", "ok");
+        refreshAdminLog();
+        await Promise.all([loadMeta(), loadRfqs()]);
+      }
+    }
+  } catch (e) {
+    // ignore transient errors while polling
+  }
+}
+
+function startAdminPolling() {
+  if (adminPollTimer) return;
+  adminPollTimer = setInterval(pollAdminStatus, 3000);
+}
+
+async function triggerAdminRun() {
+  setAdminStatus("Starting...", "busy");
+  try {
+    const res = await fetch("/api/admin/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+      setAdminStatus(data.error || "Couldn't start the run.", "err");
+      return;
+    }
+    setAdminStatus(data.message || "Started.", "busy");
+    startAdminPolling();
+  } catch (e) {
+    setAdminStatus("Couldn't reach the server: " + e.message, "err");
+  }
+}
+
+async function triggerAdminTodayCheck() {
+  setAdminStatus("Starting...", "busy");
+  try {
+    const res = await fetch("/api/admin/run-today-check", { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.error) {
+      setAdminStatus(data.error || "Couldn't start the check.", "err");
+      return;
+    }
+    setAdminStatus(data.message || "Started.", "busy");
+    startAdminPolling();
+  } catch (e) {
+    setAdminStatus("Couldn't reach the server: " + e.message, "err");
+  }
+}
+
+function wireAdminPanel() {
+  const overlay = $("#adminModal");
+
+  $("#adminToggle").addEventListener("click", () => {
+    overlay.classList.remove("hidden");
+    refreshAdminLog();
+    pollAdminStatus();
+  });
+  $("#adminModalClose").addEventListener("click", () => {
+    overlay.classList.add("hidden");
+  });
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.classList.add("hidden");
+  });
+
+  $("#btn-run-tonight").addEventListener("click", triggerAdminRun);
+  $("#btn-run-today-check").addEventListener("click", triggerAdminTodayCheck);
+  $("#btn-refresh-log").addEventListener("click", refreshAdminLog);
 }
 
 async function init() {

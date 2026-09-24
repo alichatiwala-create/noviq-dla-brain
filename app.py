@@ -258,12 +258,6 @@ def api_scrape():
 # Admin: run the pipeline / view logs from the website (local PC only)
 # ---------------------------------------------------------------------------
 
-@app.route("/admin")
-@require_admin_auth
-def admin_page():
-    return send_from_directory(app.static_folder, "admin.html")
-
-
 @app.route("/api/admin/status")
 def api_admin_status():
     # Deliberately NOT password-gated - it only reveals whether the panel

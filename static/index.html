@@ -39,6 +39,9 @@
           <button id="backfillToggle" class="last-updated-btn" type="button" title="Pull in a specific date's RFQs from DIBBS">
             &#128197; Backfill a date
           </button>
+          <button id="adminToggle" class="last-updated-btn" type="button" title="Run the pipeline manually and view its log (local PC only)">
+            &#9881; Admin tools
+          </button>
         </div>
         <div id="backfillPanel" class="backfill-panel" hidden>
           <input type="date" id="backfillDate">
@@ -220,6 +223,45 @@
 
   <!-- Toast -->
   <div id="toast" class="toast hidden"></div>
+
+  <!-- Admin tools modal -->
+  <div id="adminModal" class="admin-modal-overlay hidden">
+    <div class="admin-modal">
+      <div class="admin-modal-header">
+        <h2>Admin tools</h2>
+        <button id="adminModalClose" class="detail-close-btn" type="button" title="Close">&times;</button>
+      </div>
+      <p class="admin-modal-note">
+        Only works here on your own PC (Playwright + a route to DIBBS are required) - these
+        actions don't run on the public Render website.
+      </p>
+
+      <div class="admin-card">
+        <h3>Run tonight's pipeline now</h3>
+        <p>Fetches yesterday's files and imports them, exactly like the automatic nightly run does -
+           useful if you want to run it manually right now instead of waiting.</p>
+        <button class="btn btn-primary btn-sm" id="btn-run-tonight">Run tonight's pipeline</button>
+      </div>
+
+      <div class="admin-card">
+        <h3>Check today's live RFQs now</h3>
+        <p>Today's real archive file won't exist until tomorrow, but DIBBS's live listing already
+           shows today's postings as they go up. Click this any time during the day to pull in
+           whatever's posted so far - safe to click repeatedly, it never duplicates.</p>
+        <button class="btn btn-primary btn-sm" id="btn-run-today-check">Check today's live RFQs</button>
+      </div>
+
+      <div id="admin-status-msg" class="backfill-status"></div>
+
+      <div class="admin-card">
+        <h3>Log <span id="log-live-dot" class="admin-live-dot hidden">&#9679; live</span></h3>
+        <p>The same plain-English log the automatic nightly run writes to - refreshes itself while a
+           run is in progress.</p>
+        <button class="btn btn-secondary btn-sm" id="btn-refresh-log">Refresh log</button>
+        <pre id="log-box">(loading...)</pre>
+      </div>
+    </div>
+  </div>
 
 </div>
 <script src="app.js"></script>
