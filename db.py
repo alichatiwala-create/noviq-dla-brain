@@ -30,8 +30,19 @@ Set these once in your terminal session before running any importer:
 """
 
 import os
+import socket
 import ssl
 import pg8000.dbapi as pg8000
+
+# Without this, a stalled network connection (a common thing on home
+# wifi/routers during a long-running import) makes pg8000 hang FOREVER
+# waiting for a reply that's never coming - no error, no crash, it just
+# silently stops making progress. Setting a socket timeout means a
+# stalled connection instead raises a clear "timed out" error after 60
+# seconds, which run_with_retries below already knows how to catch and
+# retry from. This only affects network sockets this process opens
+# from here on, so it's safe to set globally for an import script.
+socket.setdefaulttimeout(60)
 
 
 def get_connection():

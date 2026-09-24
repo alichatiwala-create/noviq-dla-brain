@@ -260,7 +260,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("zip_path", help="Path to the Contracthist zip file you downloaded")
     args = parser.parse_args()
-    db.run_with_retries(run, args.zip_path)
+    # Bump max_retries above the default 3 - this file has 800K+ rows and
+    # a single connection held open the whole time, so on a slower home
+    # connection it's realistic to hit more than 3 stalls across a full run.
+    db.run_with_retries(run, args.zip_path, max_retries=10, retry_delay_seconds=10)
 
 
 if __name__ == "__main__":
